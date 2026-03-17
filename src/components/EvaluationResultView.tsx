@@ -12,6 +12,10 @@ interface Props {
 
 export const EvaluationResultView: React.FC<Props> = ({ result }) => {
   const [showDetails, setShowDetails] = React.useState(false);
+  const strengths = result?.strengths ?? [];
+  const gaps = result?.gaps ?? [];
+  const riskFlags = result?.risk_flags ?? [];
+  const evidence = result?.evidence_by_requirement ?? [];
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return '#10b981'; // emerald-500
@@ -29,7 +33,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
     }
   };
 
-  const chartData = result.evidence_by_requirement.map(req => ({
+  const chartData = evidence.map(req => ({
     name: req.requirement.substring(0, 30) + '...',
     score: req.score,
     full_name: req.requirement,
@@ -88,7 +92,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-black/5">
             <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Key Strengths</h3>
             <ul className="space-y-3">
-              {result.strengths.map((s, i) => (
+              {strengths.map((s, i) => (
                 <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
                   <div className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                   {s}
@@ -100,7 +104,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-black/5">
             <h3 className="text-xs font-bold uppercase tracking-widest text-red-600 mb-4">Identified Gaps</h3>
             <ul className="space-y-3">
-              {result.gaps.map((g, i) => (
+              {gaps.map((g, i) => (
                 <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
                   <div className="mt-1 w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
                   {g}
@@ -109,11 +113,11 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
             </ul>
           </div>
 
-          {result.risk_flags.length > 0 && (
+          {riskFlags.length > 0 && (
             <div className="bg-amber-50 rounded-2xl p-6 border border-amber-100">
               <h3 className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-4">Risk Flags</h3>
               <ul className="space-y-3">
-                {result.risk_flags.map((r, i) => (
+                {riskFlags.map((r, i) => (
                   <li key={i} className="flex items-start gap-3 text-sm text-amber-800">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     {r}
@@ -194,7 +198,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {result.evidence_by_requirement.map((req, i) => (
+                {evidence.map((req, i) => (
                   <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-gray-900 max-w-xs">{req.requirement}</td>
                     <td className="px-6 py-4">

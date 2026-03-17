@@ -10,7 +10,8 @@ import {
   Plus,
   Trash2,
   ChevronRight,
-  LayoutDashboard
+  LayoutDashboard,
+  XCircle
 } from 'lucide-react';
 import { evaluateCV, EvaluationResult } from './services/aiService';
 import { EvaluationResultView } from './components/EvaluationResultView';

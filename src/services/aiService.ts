@@ -1,6 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
 export interface EvaluationResult {
   candidate_name: string;
@@ -42,8 +40,87 @@ export const JD_REQUIREMENTS = {
   ]
 };
 
+function safeParseJson<T>(text: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(text.slice(start, end + 1)) as T;
+    }
+    throw new Error("Model returned non-JSON output.");
+  }
+}
+
+function normalizeEvaluationResult(raw: any): EvaluationResult {
+  const strengths = Array.isArray(raw?.strengths) ? raw.strengths : [];
+  const gaps = Array.isArray(raw?.gaps) ? raw.gaps : [];
+  const riskFlags = Array.isArray(raw?.risk_flags) ? raw.risk_flags : [];
+  const evidence = Array.isArray(raw?.evidence_by_requirement)
+    ? raw.evidence_by_requirement
+    : [];
+
+  return {
+    candidate_name: String(raw?.candidate_name ?? "Unknown Candidate"),
+    overall_score: Number.isFinite(raw?.overall_score) ? raw.overall_score : 0,
+    must_have_score: Number.isFinite(raw?.must_have_score) ? raw.must_have_score : 0,
+    nice_to_have_score: Number.isFinite(raw?.nice_to_have_score) ? raw.nice_to_have_score : 0,
+    recommendation:
+      raw?.recommendation === "Strong Hire" ||
+      raw?.recommendation === "Proceed to Interview" ||
+      raw?.recommendation === "Hold" ||
+      raw?.recommendation === "Reject"
+        ? raw.recommendation
+        : "Hold",
+    strengths: strengths.map((s: any) => String(s)).filter(Boolean),
+    gaps: gaps.map((g: any) => String(g)).filter(Boolean),
+    evidence_by_requirement: evidence
+      .map((e: any) => ({
+        requirement: String(e?.requirement ?? ""),
+        score: Number.isFinite(e?.score) ? e.score : 0,
+        evidence: String(e?.evidence ?? ""),
+        is_must_have: Boolean(e?.is_must_have),
+      }))
+      .filter((e: any) => e.requirement),
+    risk_flags: riskFlags.map((r: any) => String(r)).filter(Boolean),
+    recruiter_summary: String(raw?.recruiter_summary ?? ""),
+  };
+}
+
+async function groqChatText(args: {
+  apiKey: string;
+  model: string;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+  response_format?: unknown;
+}): Promise<string> {
+  const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${args.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: args.model,
+      messages: args.messages,
+      response_format: args.response_format,
+      temperature: 0,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Groq API error (${res.status}): ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
 export async function evaluateCV(cvText: string): Promise<EvaluationResult> {
-  const model = "gemini-3.1-pro-preview"; // Using Pro for better reasoning on CVs
+  const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
   
   const prompt = `
     Evaluate the following candidate CV against the Job Description requirements provided below.
@@ -94,13 +171,41 @@ export async function evaluateCV(cvText: string): Promise<EvaluationResult> {
     }
   `;
 
-  const response = await ai.models.generateContent({
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("Missing GROQ_API_KEY environment variable.");
+
+  const jsonOnlyInstruction =
+    "Return ONLY a valid JSON object that matches the requested schema. No markdown, no commentary, no code fences.";
+
+  const outputText = await groqChatText({
+    apiKey,
     model,
-    contents: [{ parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-    },
+    messages: [
+      { role: "system", content: jsonOnlyInstruction },
+      { role: "user", content: prompt },
+    ],
+    response_format: { type: "json_object" },
   });
 
-  return JSON.parse(response.text || "{}");
+  try {
+    return normalizeEvaluationResult(safeParseJson<any>(outputText));
+  } catch {
+    const repaired = await groqChatText({
+      apiKey,
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You repair JSON. Output ONLY valid JSON. Do not add any other text.",
+        },
+        {
+          role: "user",
+          content: `Fix this into a single valid JSON object (no commentary):\n\n${outputText}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+    return normalizeEvaluationResult(safeParseJson<any>(repaired));
+  }
 }
