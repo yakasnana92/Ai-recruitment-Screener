@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .animate-in {
+    animation-duration: 0.5s;
+    animation-fill-mode: both;
+  }
+  
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slide-in-from-bottom {
+    from { transform: translateY(1rem); }
+    to { transform: translateY(0); }
+  }
+  
+  .fade-in {
+    animation-name: fade-in;
+  }
+  
+  .slide-in-from-bottom-4 {
+    animation-name: slide-in-from-bottom;
+  }
+}
+
+body {
+  @apply bg-[#f8f9fa];
+}

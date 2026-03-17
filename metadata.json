@@ -1,0 +1,5 @@
+{
+  "name": "AI Recruitment Screener",
+  "description": "A professional tool for screening candidate CVs against job descriptions using Gemini AI, featuring weighted scoring and detailed gap analysis.",
+  "requestFramePermissions": []
+}
