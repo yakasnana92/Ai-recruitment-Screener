@@ -17,7 +17,7 @@ export interface EvaluationResult {
   risk_flags: string[];
   recruiter_summary: string;
 }
-
+// Job Description Requirements
 export const JD_REQUIREMENTS = {
   must_haves: [
     "Strong development experience in React Native mobile development",
