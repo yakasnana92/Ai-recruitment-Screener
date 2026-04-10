@@ -16,29 +16,74 @@ export interface EvaluationResult {
   }[];
   risk_flags: string[];
   recruiter_summary: string;
+  github_evaluation: GitHubEvaluation;
 }
-// Job Description Requirements
-export const JD_REQUIREMENTS = {
-  must_haves: [
-    "Strong development experience in React Native mobile development",
-    "Hands-on experience with Expo for building cross-platform mobile apps",
-    "Tech leadership experience",
-    "Clear understanding of the most common design patterns in React Native",
-    "Ability to lead on Unit Testing and UI Testing for mobile apps",
-    "Experience with Agile, TDD, and BDD",
-    "React Native UI customisation, ensuring user experience is consistent in both Android and iOS",
-    "Performance optimisation"
-  ],
-  nice_to_haves: [
-    "AWS Serverless experience",
-    "Coaching experience across Agile teams",
-    "Leadership across cross-functional development teams",
-    "Experience exploring other technologies and recommending improvements to ways of working",
-    "Clear understanding of software development best practices",
-    "Appreciation for client work and/or consulting",
-    "Familiarity with deploying Expo apps to both iOS and Android stores using EAS Build"
-  ]
-};
+
+export interface JDRequirements {
+  title?: string;
+  must_haves: string[];
+  nice_to_haves: string[];
+  raw_text?: string;
+}
+
+export interface GitHubInput {
+  url: string;
+  url_type: "profile" | "repository" | "unknown";
+  owner?: string;
+  repo?: string;
+}
+
+export interface GitHubEvaluation {
+  provided: boolean;
+  url?: string;
+  url_type?: "profile" | "repository" | "unknown";
+  summary: string;
+  strengths: string[];
+  gaps: string[];
+  risk_flags: string[];
+}
+
+export function parseGitHubUrl(input: string): GitHubInput | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (parsed.hostname !== "github.com" && parsed.hostname !== "www.github.com") {
+    return {
+      url: trimmed,
+      url_type: "unknown",
+    };
+  }
+
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      url: trimmed,
+      url_type: "profile",
+      owner: parts[0],
+    };
+  }
+
+  if (parts.length >= 2) {
+    return {
+      url: trimmed,
+      url_type: "repository",
+      owner: parts[0],
+      repo: parts[1],
+    };
+  }
+
+  return {
+    url: trimmed,
+    url_type: "unknown",
+  };
+}
 
 function safeParseJson<T>(text: string): T {
   try {
@@ -59,6 +104,15 @@ function normalizeEvaluationResult(raw: any): EvaluationResult {
   const riskFlags = Array.isArray(raw?.risk_flags) ? raw.risk_flags : [];
   const evidence = Array.isArray(raw?.evidence_by_requirement)
     ? raw.evidence_by_requirement
+    : [];
+  const githubStrengths = Array.isArray(raw?.github_evaluation?.strengths)
+    ? raw.github_evaluation.strengths
+    : [];
+  const githubGaps = Array.isArray(raw?.github_evaluation?.gaps)
+    ? raw.github_evaluation.gaps
+    : [];
+  const githubRiskFlags = Array.isArray(raw?.github_evaluation?.risk_flags)
+    ? raw.github_evaluation.risk_flags
     : [];
 
   return {
@@ -85,6 +139,25 @@ function normalizeEvaluationResult(raw: any): EvaluationResult {
       .filter((e: any) => e.requirement),
     risk_flags: riskFlags.map((r: any) => String(r)).filter(Boolean),
     recruiter_summary: String(raw?.recruiter_summary ?? ""),
+    github_evaluation: {
+      provided: Boolean(raw?.github_evaluation?.provided),
+      url: raw?.github_evaluation?.url
+        ? String(raw.github_evaluation.url)
+        : undefined,
+      url_type:
+        raw?.github_evaluation?.url_type === "profile" ||
+        raw?.github_evaluation?.url_type === "repository" ||
+        raw?.github_evaluation?.url_type === "unknown"
+          ? raw.github_evaluation.url_type
+          : "unknown",
+      summary: String(
+        raw?.github_evaluation?.summary ??
+          "No GitHub evidence was included for this candidate."
+      ),
+      strengths: githubStrengths.map((s: any) => String(s)).filter(Boolean),
+      gaps: githubGaps.map((g: any) => String(g)).filter(Boolean),
+      risk_flags: githubRiskFlags.map((r: any) => String(r)).filter(Boolean),
+    },
   };
 }
 
@@ -119,18 +192,41 @@ async function groqChatText(args: {
   return data.choices?.[0]?.message?.content ?? "";
 }
 
-export async function evaluateCV(cvText: string): Promise<EvaluationResult> {
+export async function evaluateCV(
+  cvText: string,
+  jdRequirements: JDRequirements,
+  githubUrl?: string
+): Promise<EvaluationResult> {
   const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+  const mustHaves = jdRequirements.must_haves ?? [];
+  const niceToHaves = jdRequirements.nice_to_haves ?? [];
+  const jdTitle = jdRequirements.title || "Untitled Role";
+  const jdRawText = jdRequirements.raw_text || "";
+  const parsedGitHub = githubUrl ? parseGitHubUrl(githubUrl) : null;
+  const githubInputBlock = parsedGitHub
+    ? `URL: ${parsedGitHub.url}
+URL_TYPE: ${parsedGitHub.url_type}
+OWNER: ${parsedGitHub.owner || ""}
+REPOSITORY: ${parsedGitHub.repo || ""}`
+    : "No GitHub URL provided.";
   
   const prompt = `
     Evaluate the following candidate CV against the Job Description requirements provided below.
     
     JOB DESCRIPTION REQUIREMENTS:
+    TITLE:
+    ${jdTitle}
+
     MUST-HAVES:
-    ${JD_REQUIREMENTS.must_haves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+    ${mustHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
     
     NICE-TO-HAVES:
-    ${JD_REQUIREMENTS.nice_to_haves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+    ${niceToHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+
+    RAW JOB DESCRIPTION TEXT (for additional context):
+    """
+    ${jdRawText}
+    """
     
     SCORING RULES:
     - Assess ONLY based on evidence found in the CV.
@@ -147,6 +243,16 @@ export async function evaluateCV(cvText: string): Promise<EvaluationResult> {
     """
     ${cvText}
     """
+
+    OPTIONAL GITHUB INPUT:
+    ${githubInputBlock}
+
+    GITHUB EVALUATION RULES:
+    - Keep GitHub evaluation separate from CV evaluation.
+    - If GitHub input exists, treat it as supporting evidence only.
+    - Prioritize repository quality and relevance to the JD.
+    - Do NOT prioritize vanity metrics (stars, followers) unless directly relevant.
+    - If no GitHub URL is provided, return github_evaluation.provided as false.
     
     OUTPUT FORMAT:
     Return a strict JSON object following this schema:
@@ -167,7 +273,16 @@ export async function evaluateCV(cvText: string): Promise<EvaluationResult> {
         }
       ],
       "risk_flags": ["string"],
-      "recruiter_summary": "Concise summary for a recruiter making a shortlist decision"
+      "recruiter_summary": "Concise summary for a recruiter making a shortlist decision",
+      "github_evaluation": {
+        "provided": boolean,
+        "url": "string",
+        "url_type": "profile" | "repository" | "unknown",
+        "summary": "string",
+        "strengths": ["string"],
+        "gaps": ["string"],
+        "risk_flags": ["string"]
+      }
     }
   `;
 
