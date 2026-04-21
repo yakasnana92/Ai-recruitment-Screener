@@ -1,6 +1,6 @@
 import React from 'react';
 import { Loader2, Upload, XCircle } from 'lucide-react';
-import { evaluateCV, EvaluationResult, JDRequirements, parseGitHubUrl } from './services/aiService';
+import { evaluateCV, EvaluationResult, JDRequirements } from './services/aiService';
 import { EvaluationResultView } from './components/EvaluationResultView';
 import { JobDescriptionView } from './components/JobDescriptionView';
 
@@ -8,7 +8,6 @@ interface Candidate {
   id: string;
   name: string;
   cvText: string;
-  githubUrl?: string;
   status: 'pending' | 'evaluating' | 'completed' | 'error';
   result?: EvaluationResult;
   timestamp: number;
@@ -54,7 +53,6 @@ export default function App() {
   const [candidateNameInput, setCandidateNameInput] = React.useState('');
   const [jdInput, setJdInput] = React.useState('');
   const [activeJD, setActiveJD] = React.useState<JDRequirements | null>(null);
-  const [githubUrlInput, setGithubUrlInput] = React.useState('');
 
   React.useEffect(() => {
     const saved = localStorage.getItem(ACTIVE_JD_STORAGE_KEY);
@@ -103,7 +101,6 @@ export default function App() {
       id: newId,
       name: candidateNameInput,
       cvText: cvInput,
-      githubUrl: githubUrlInput.trim() || undefined,
       status: 'evaluating',
       timestamp: Date.now()
     };
@@ -112,7 +109,7 @@ export default function App() {
     setSelectedCandidateId(newId);
 
     try {
-      const result = await evaluateCV(cvInput, activeJD, githubUrlInput.trim() || undefined);
+      const result = await evaluateCV(cvInput, activeJD);
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'completed', result } : c
       ));
@@ -129,7 +126,6 @@ export default function App() {
   };
 
   const selectedCandidate = candidates.find(c => c.id === selectedCandidateId);
-  const parsedGitHubInput = parseGitHubUrl(githubUrlInput);
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] text-gray-900 font-sans">
@@ -179,23 +175,6 @@ export default function App() {
                 placeholder="Paste the full text from the candidate CV here..."
                 className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none resize-none font-mono text-xs"
               />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                Optional GitHub URL (Profile or Repository)
-              </label>
-              <input
-                type="url"
-                value={githubUrlInput}
-                onChange={(e) => setGithubUrlInput(e.target.value)}
-                placeholder="https://github.com/username or https://github.com/owner/repo"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none text-sm"
-              />
-              {githubUrlInput.trim() && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Link type: {parsedGitHubInput?.url_type || 'invalid'}
-                </p>
-              )}
             </div>
             <button
               onClick={handleEvaluate}

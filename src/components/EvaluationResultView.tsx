@@ -15,7 +15,6 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
   const gaps = result?.gaps ?? [];
   const riskFlags = result?.risk_flags ?? [];
   const evidence = result?.evidence_by_requirement ?? [];
-  const githubEvaluation = result?.github_evaluation;
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return '#10b981'; // emerald-500
@@ -195,10 +194,13 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
                   type="category"
                   width={220}
                   interval={0}
-                  tick={(props: { x: number; y: number; payload: { value: string } }) => {
-                    const lines = splitLabelIntoTwoLines(props.payload.value, 30);
+                  tick={(props) => {
+                    const label = String(props?.payload?.value ?? '');
+                    const lines = splitLabelIntoTwoLines(label, 30);
+                    const x = Number(props?.x ?? 0);
+                    const y = Number(props?.y ?? 0);
                     return (
-                      <g transform={`translate(${props.x},${props.y})`}>
+                      <g transform={`translate(${x},${y})`}>
                         <text
                           x={0}
                           y={0}
@@ -254,70 +256,6 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* GitHub Evaluation */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-bold text-gray-900">GitHub Evaluation</h3>
-          {githubEvaluation?.provided ? (
-            <span className="text-[10px] uppercase tracking-widest font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full">
-              {githubEvaluation.url_type || 'unknown'}
-            </span>
-          ) : (
-            <span className="text-[10px] uppercase tracking-widest font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-              not provided
-            </span>
-          )}
-        </div>
-
-        {githubEvaluation?.url && (
-          <p className="text-sm text-gray-600 break-all">
-            {githubEvaluation.url}
-          </p>
-        )}
-
-        <p className="text-sm text-gray-600">
-          {githubEvaluation?.summary || 'No GitHub evidence was included for this candidate.'}
-        </p>
-
-        {githubEvaluation?.provided && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-2">Strengths</h4>
-              <ul className="space-y-2">
-                {(githubEvaluation.strengths || []).map((item, idx) => (
-                  <li key={idx} className="text-sm text-gray-700 flex items-start gap-2">
-                    <div className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-red-600 mb-2">Gaps</h4>
-              <ul className="space-y-2">
-                {(githubEvaluation.gaps || []).map((item, idx) => (
-                  <li key={idx} className="text-sm text-gray-700 flex items-start gap-2">
-                    <div className="mt-1 w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-2">Risk Flags</h4>
-              <ul className="space-y-2">
-                {(githubEvaluation.risk_flags || []).map((item, idx) => (
-                  <li key={idx} className="text-sm text-amber-800 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Detailed Evidence Table */}
