@@ -44,9 +44,9 @@ function parseJDText(rawText: string): JDRequirements {
 
   return {
     title,
-    must_haves: mustHaves,
-    nice_to_haves: niceToHaves,
-    raw_text: normalizedText,
+    mustHaves,
+    niceToHaves,
+    rawText: normalizedText,
   };
 }
 
@@ -89,7 +89,7 @@ export default function App() {
 
   const handleReplaceJD = () => {
     setJdActivationError(null);
-    setJdInput(activeJD?.raw_text || '');
+    setJdInput(activeJD?.rawText || '');
   };
 
   const handleClearJD = () => {
@@ -104,8 +104,8 @@ export default function App() {
     const trimmedCandidateName = candidateNameInput.trim();
     const hasValidJD =
       !!activeJDForEvaluation &&
-      ((activeJDForEvaluation.must_haves?.length ?? 0) > 0 ||
-        (activeJDForEvaluation.nice_to_haves?.length ?? 0) > 0);
+      ((activeJDForEvaluation.mustHaves?.length ?? 0) > 0 ||
+        (activeJDForEvaluation.niceToHaves?.length ?? 0) > 0);
     if (!trimmedCV || !trimmedCandidateName || !hasValidJD || !activeJDForEvaluation) return;
 
     setIsEvaluating(true);
@@ -123,7 +123,7 @@ export default function App() {
     setSelectedCandidateId(newId);
 
     try {
-      const result = await evaluateCV(trimmedCV, activeJDForEvaluation);
+      const result = await evaluateCV(trimmedCandidateName, trimmedCV, activeJDForEvaluation);
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'completed', result } : c
       ));
@@ -135,8 +135,8 @@ export default function App() {
         candidateName: trimmedCandidateName,
         cvLength: trimmedCV.length,
         jdTitle: activeJDForEvaluation.title,
-        mustHaveCount: activeJDForEvaluation.must_haves.length,
-        niceToHaveCount: activeJDForEvaluation.nice_to_haves.length,
+        mustHaveCount: activeJDForEvaluation.mustHaves.length,
+        niceToHaveCount: activeJDForEvaluation.niceToHaves.length,
       });
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'error', errorMessage } : c
@@ -210,7 +210,7 @@ export default function App() {
                 !cvInput.trim() ||
                 !candidateNameInput.trim() ||
                 !activeJD ||
-                (activeJD.must_haves.length === 0 && activeJD.nice_to_haves.length === 0)
+                (activeJD.mustHaves.length === 0 && activeJD.niceToHaves.length === 0)
               }
               className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >

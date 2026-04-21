@@ -16,12 +16,12 @@ View your app in AI Studio: https://ai.studio/apps/8e238da8-87ea-4443-bac5-1b7fa
 1. Install dependencies:
    `npm install`
 2. Create `.env.local` in the project root and add:
-   `VITE_GROQ_API_KEY="YOUR_GROQ_API_KEY"`
-   Optional: `VITE_GROQ_MODEL="openai/gpt-oss-20b"`
+   `GROQ_API_KEY="YOUR_GROQ_API_KEY"`
+   Optional: `GROQ_MODEL="openai/gpt-oss-20b"`
 3. Run the app:
    `npm run dev`
 
 ## Architecture Note
 
-AI screening requests are made directly from the Vite frontend (`src/services/aiService.ts`) to Groq.
-Because of this, the key is read from `import.meta.env.VITE_GROQ_API_KEY` and is exposed to the browser at runtime.
+AI screening requests are sent from the frontend to `POST /api/screening`.
+The Express server in `server/index.ts` calls Groq using `GROQ_API_KEY` from server environment variables.

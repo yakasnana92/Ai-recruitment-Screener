@@ -68,7 +68,7 @@ export const JobDescriptionView: React.FC<Props> = ({
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Must-Haves</p>
               <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
-                {activeJD.must_haves.slice(0, 8).map((item, idx) => (
+                {activeJD.mustHaves.slice(0, 8).map((item, idx) => (
                   <li key={`${item}-${idx}`}>{item}</li>
                 ))}
               </ul>
@@ -76,7 +76,7 @@ export const JobDescriptionView: React.FC<Props> = ({
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Nice-to-Haves</p>
               <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
-                {activeJD.nice_to_haves.slice(0, 8).map((item, idx) => (
+                {activeJD.niceToHaves.slice(0, 8).map((item, idx) => (
                   <li key={`${item}-${idx}`}>{item}</li>
                 ))}
               </ul>
