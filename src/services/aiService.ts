@@ -1,11 +1,16 @@
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const SCREENING_CACHE_KEY_PREFIX = "screening-cache-v1";
+const PROMPT_VERSION = "2026-04-21-deterministic-rubric-v1";
+
+type Recommendation = "Strong Hire" | "Proceed to Interview" | "Hold" | "Reject";
+type EvidenceStrength = "no_evidence" | "weak" | "moderate" | "strong";
 
 export interface EvaluationResult {
   candidate_name: string;
   overall_score: number;
   must_have_score: number;
   nice_to_have_score: number;
-  recommendation: "Strong Hire" | "Proceed to Interview" | "Hold" | "Reject";
+  recommendation: Recommendation;
   strengths: string[];
   gaps: string[];
   evidence_by_requirement: {
@@ -25,6 +30,21 @@ export interface JDRequirements {
   raw_text?: string;
 }
 
+interface StructuredEvidenceItem {
+  requirement: string;
+  evidence: string;
+  evidence_strength: EvidenceStrength;
+}
+
+interface ModelEvaluationOutput {
+  candidate_name?: string;
+  strengths?: string[];
+  gaps?: string[];
+  risk_flags?: string[];
+  recruiter_summary?: string;
+  evidence_by_requirement?: StructuredEvidenceItem[];
+}
+
 function safeParseJson<T>(text: string): T {
   try {
     return JSON.parse(text) as T;
@@ -38,39 +58,172 @@ function safeParseJson<T>(text: string): T {
   }
 }
 
-function normalizeEvaluationResult(raw: any): EvaluationResult {
-  const strengths = Array.isArray(raw?.strengths) ? raw.strengths : [];
-  const gaps = Array.isArray(raw?.gaps) ? raw.gaps : [];
-  const riskFlags = Array.isArray(raw?.risk_flags) ? raw.risk_flags : [];
-  const evidence = Array.isArray(raw?.evidence_by_requirement)
-    ? raw.evidence_by_requirement
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function normalizeForMatching(text: string): string {
+  return normalizeWhitespace(text).toLowerCase();
+}
+
+function dedupePreserveOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const key = normalizeForMatching(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+  }
+  return output;
+}
+
+function canonicalizeJD(jd: JDRequirements): {
+  title: string;
+  raw_text: string;
+  must_haves: string[];
+  nice_to_haves: string[];
+} {
+  const title = normalizeWhitespace(jd.title || "Untitled Role");
+  const raw_text = normalizeWhitespace(jd.raw_text || "");
+  const must_haves = dedupePreserveOrder((jd.must_haves || []).map((r) => normalizeWhitespace(String(r))).filter(Boolean));
+  const nice_to_haves = dedupePreserveOrder((jd.nice_to_haves || []).map((r) => normalizeWhitespace(String(r))).filter(Boolean));
+  return { title, raw_text, must_haves, nice_to_haves };
+}
+
+function normalizeCV(cvText: string): string {
+  return normalizeWhitespace(cvText);
+}
+
+function strengthToScore(strength: EvidenceStrength): number {
+  switch (strength) {
+    case "strong":
+      return 3;
+    case "moderate":
+      return 2;
+    case "weak":
+      return 1;
+    case "no_evidence":
+    default:
+      return 0;
+  }
+}
+
+function scoreToPercent(score: number, maxScore: number): number {
+  if (maxScore <= 0) return 0;
+  return Math.round((score / maxScore) * 100);
+}
+
+function getRecommendation(overallScore: number): Recommendation {
+  if (overallScore >= 80) return "Strong Hire";
+  if (overallScore >= 60) return "Proceed to Interview";
+  if (overallScore >= 40) return "Hold";
+  return "Reject";
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function buildStableResult(args: {
+  raw: ModelEvaluationOutput;
+  requirements: Array<{ requirement: string; is_must_have: boolean }>;
+}): EvaluationResult {
+  const strengths = Array.isArray(args.raw?.strengths)
+    ? args.raw.strengths.map((s) => normalizeWhitespace(String(s))).filter(Boolean)
+    : [];
+  const gaps = Array.isArray(args.raw?.gaps)
+    ? args.raw.gaps.map((g) => normalizeWhitespace(String(g))).filter(Boolean)
+    : [];
+  const riskFlags = Array.isArray(args.raw?.risk_flags)
+    ? args.raw.risk_flags.map((r) => normalizeWhitespace(String(r))).filter(Boolean)
+    : [];
+  const rawEvidence = Array.isArray(args.raw?.evidence_by_requirement)
+    ? args.raw.evidence_by_requirement
     : [];
 
+  const evidenceMap = new Map<string, StructuredEvidenceItem>();
+  for (const item of rawEvidence) {
+    const requirement = normalizeWhitespace(String(item?.requirement ?? ""));
+    if (!requirement) continue;
+    const key = normalizeForMatching(requirement);
+    if (!evidenceMap.has(key)) {
+      const evidence_strength = item?.evidence_strength;
+      evidenceMap.set(key, {
+        requirement,
+        evidence: normalizeWhitespace(String(item?.evidence ?? "")),
+        evidence_strength:
+          evidence_strength === "no_evidence" ||
+          evidence_strength === "weak" ||
+          evidence_strength === "moderate" ||
+          evidence_strength === "strong"
+            ? evidence_strength
+            : "no_evidence",
+      });
+    }
+  }
+
+  const evidence_by_requirement = args.requirements.map((req) => {
+    const entry = evidenceMap.get(normalizeForMatching(req.requirement));
+    const evidence_strength = entry?.evidence_strength ?? "no_evidence";
+    const score = strengthToScore(evidence_strength);
+    const evidenceText = entry?.evidence
+      ? entry.evidence
+      : "No evidence found in the provided CV text.";
+
+    return {
+      requirement: req.requirement,
+      score,
+      evidence: evidenceText,
+      is_must_have: req.is_must_have,
+    };
+  });
+
+  const mustEvidence = evidence_by_requirement.filter((e) => e.is_must_have);
+  const niceEvidence = evidence_by_requirement.filter((e) => !e.is_must_have);
+  const mustRawScore = mustEvidence.reduce((acc, item) => acc + item.score, 0);
+  const niceRawScore = niceEvidence.reduce((acc, item) => acc + item.score, 0);
+
+  const mustMax = mustEvidence.length * 3;
+  const niceMax = niceEvidence.length * 3;
+  const must_have_score = scoreToPercent(mustRawScore, mustMax);
+  const nice_to_have_score = scoreToPercent(niceRawScore, niceMax);
+  const overall_score = Math.round(must_have_score * 0.8 + nice_to_have_score * 0.2);
+
   return {
-    candidate_name: String(raw?.candidate_name ?? "Unknown Candidate"),
-    overall_score: Number.isFinite(raw?.overall_score) ? raw.overall_score : 0,
-    must_have_score: Number.isFinite(raw?.must_have_score) ? raw.must_have_score : 0,
-    nice_to_have_score: Number.isFinite(raw?.nice_to_have_score) ? raw.nice_to_have_score : 0,
-    recommendation:
-      raw?.recommendation === "Strong Hire" ||
-      raw?.recommendation === "Proceed to Interview" ||
-      raw?.recommendation === "Hold" ||
-      raw?.recommendation === "Reject"
-        ? raw.recommendation
-        : "Hold",
-    strengths: strengths.map((s: any) => String(s)).filter(Boolean),
-    gaps: gaps.map((g: any) => String(g)).filter(Boolean),
-    evidence_by_requirement: evidence
-      .map((e: any) => ({
-        requirement: String(e?.requirement ?? ""),
-        score: Number.isFinite(e?.score) ? e.score : 0,
-        evidence: String(e?.evidence ?? ""),
-        is_must_have: Boolean(e?.is_must_have),
-      }))
-      .filter((e: any) => e.requirement),
-    risk_flags: riskFlags.map((r: any) => String(r)).filter(Boolean),
-    recruiter_summary: String(raw?.recruiter_summary ?? ""),
+    candidate_name: normalizeWhitespace(String(args.raw?.candidate_name ?? "Unknown Candidate")),
+    overall_score,
+    must_have_score,
+    nice_to_have_score,
+    recommendation: getRecommendation(overall_score),
+    strengths,
+    gaps,
+    evidence_by_requirement,
+    risk_flags: riskFlags,
+    recruiter_summary: normalizeWhitespace(String(args.raw?.recruiter_summary ?? "")),
   };
+}
+
+function getScreeningCache(cacheKey: string): EvaluationResult | null {
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    return JSON.parse(raw) as EvaluationResult;
+  } catch {
+    return null;
+  }
+}
+
+function setScreeningCache(cacheKey: string, result: EvaluationResult): void {
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(result));
+  } catch {
+    // Ignore cache write failures (e.g. quota exceeded, privacy mode).
+  }
 }
 
 async function groqChatText(args: {
@@ -90,6 +243,7 @@ async function groqChatText(args: {
       messages: args.messages,
       response_format: args.response_format,
       temperature: 0,
+      top_p: 0.1,
     }),
   });
 
@@ -109,66 +263,85 @@ export async function evaluateCV(
   jdRequirements: JDRequirements
 ): Promise<EvaluationResult> {
   const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-  const mustHaves = jdRequirements.must_haves ?? [];
-  const niceToHaves = jdRequirements.nice_to_haves ?? [];
-  const jdTitle = jdRequirements.title || "Untitled Role";
-  const jdRawText = jdRequirements.raw_text || "";
+  const normalizedCV = normalizeCV(cvText);
+  const normalizedJD = canonicalizeJD(jdRequirements);
+  const jdTitle = normalizedJD.title;
+  const jdRawText = normalizedJD.raw_text;
+  const mustHaves = normalizedJD.must_haves;
+  const niceToHaves = normalizedJD.nice_to_haves;
+  const requirements = [
+    ...mustHaves.map((requirement) => ({ requirement, is_must_have: true })),
+    ...niceToHaves.map((requirement) => ({ requirement, is_must_have: false })),
+  ];
+
+  const cvHash = await sha256Hex(normalizedCV);
+  const jdHash = await sha256Hex(JSON.stringify(normalizedJD));
+  const cacheKey = `${SCREENING_CACHE_KEY_PREFIX}:${cvHash}:${jdHash}:${model}:${PROMPT_VERSION}`;
+  const cached = getScreeningCache(cacheKey);
+  if (cached) return cached;
   
   const prompt = `
-    Evaluate the following candidate CV against the Job Description requirements provided below.
-    
-    JOB DESCRIPTION REQUIREMENTS:
-    TITLE:
-    ${jdTitle}
+You are a deterministic CV evidence extractor.
 
-    MUST-HAVES:
-    ${mustHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
-    
-    NICE-TO-HAVES:
-    ${niceToHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+PROMPT_VERSION: ${PROMPT_VERSION}
 
-    RAW JOB DESCRIPTION TEXT (for additional context):
-    """
-    ${jdRawText}
-    """
-    
-    SCORING RULES:
-    - Assess ONLY based on evidence found in the CV.
-    - Do NOT assume missing experience.
-    - Score each criterion using:
-      0 = No evidence
-      1 = Weak evidence (mentioned but no detail)
-      2 = Moderate evidence (clear experience described)
-      3 = Strong evidence (extensive experience or leadership shown)
-    - Must-haves carry 80% of the total weight.
-    - Nice-to-haves carry 20% of the total weight.
-    
-    CANDIDATE CV TEXT:
-    """
-    ${cvText}
-    """
-    
-    OUTPUT FORMAT:
-    Return a strict JSON object following this schema:
+Your job:
+- Evaluate candidate evidence ONLY from the provided CV text and JD requirements.
+- Do not infer, assume, or guess missing experience.
+- If evidence is absent, mark it as "no_evidence".
+- The same evidence should always map to the same evidence_strength label.
+- Do not perform final arithmetic or recommendation logic; that is handled in code.
+
+Evidence strength rubric (strict):
+- "no_evidence": requirement is not supported by CV text.
+- "weak": requirement is only briefly mentioned without concrete detail.
+- "moderate": requirement has clear supporting detail (role/project/task/impact).
+- "strong": requirement has substantial and repeated evidence, depth, or leadership.
+
+INPUTS
+JD_TITLE:
+${jdTitle}
+
+JD_MUST_HAVES:
+${mustHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+
+JD_NICE_TO_HAVES:
+${niceToHaves.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+
+JD_RAW_TEXT:
+"""
+${jdRawText}
+"""
+
+CV_TEXT:
+"""
+${normalizedCV}
+"""
+
+OUTPUT RULES
+- Return strict JSON only.
+- Keep array order stable and deterministic.
+- Return exactly one evidence object per requirement listed in inputs.
+- Keep each evidence item's "requirement" text exactly matching the input wording.
+- If no supporting text exists, set:
+  - "evidence_strength": "no_evidence"
+  - "evidence": "No evidence found in the provided CV text."
+
+OUTPUT SCHEMA
+{
+  "candidate_name": "string",
+  "strengths": ["string"],
+  "gaps": ["string"],
+  "evidence_by_requirement": [
     {
-      "candidate_name": "string",
-      "overall_score": number (0-100),
-      "must_have_score": number (0-100),
-      "nice_to_have_score": number (0-100),
-      "recommendation": "Strong Hire" | "Proceed to Interview" | "Hold" | "Reject",
-      "strengths": ["string"],
-      "gaps": ["string"],
-      "evidence_by_requirement": [
-        {
-          "requirement": "string",
-          "score": number (0-3),
-          "evidence": "string summarizing findings",
-          "is_must_have": boolean
-        }
-      ],
-      "risk_flags": ["string"],
-      "recruiter_summary": "Concise summary for a recruiter making a shortlist decision"
+      "requirement": "string",
+      "evidence_strength": "no_evidence" | "weak" | "moderate" | "strong",
+      "evidence": "string"
     }
+  ],
+  "risk_flags": ["string"],
+  "recruiter_summary": "string"
+}
   `;
 
   const apiKey = process.env.GROQ_API_KEY;
@@ -188,7 +361,10 @@ export async function evaluateCV(
   });
 
   try {
-    return normalizeEvaluationResult(safeParseJson<any>(outputText));
+    const raw = safeParseJson<ModelEvaluationOutput>(outputText);
+    const result = buildStableResult({ raw, requirements });
+    setScreeningCache(cacheKey, result);
+    return result;
   } catch {
     const repaired = await groqChatText({
       apiKey,
@@ -206,6 +382,9 @@ export async function evaluateCV(
       ],
       response_format: { type: "json_object" },
     });
-    return normalizeEvaluationResult(safeParseJson<any>(repaired));
+    const raw = safeParseJson<ModelEvaluationOutput>(repaired);
+    const result = buildStableResult({ raw, requirements });
+    setScreeningCache(cacheKey, result);
+    return result;
   }
 }
