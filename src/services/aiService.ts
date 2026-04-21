@@ -361,8 +361,13 @@ OUTPUT SCHEMA
 }
   `;
 
+  // Expected frontend env var: VITE_GROQ_API_KEY (set in .env.local).
   const apiKey = getClientEnv("VITE_GROQ_API_KEY");
-  if (!apiKey) throw new Error("Missing VITE_GROQ_API_KEY environment variable.");
+  if (!apiKey) {
+    throw new Error(
+      "Missing VITE_GROQ_API_KEY. Add VITE_GROQ_API_KEY=\"<your_groq_key>\" to .env.local and restart the Vite dev server."
+    );
+  }
 
   const jsonOnlyInstruction =
     "Return ONLY a valid JSON object that matches the requested schema. No markdown, no commentary, no code fences.";
