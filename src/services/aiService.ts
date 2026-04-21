@@ -45,6 +45,11 @@ interface ModelEvaluationOutput {
   evidence_by_requirement?: StructuredEvidenceItem[];
 }
 
+function getClientEnv(name: string): string | undefined {
+  const metaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  return metaEnv?.[name];
+}
+
 function safeParseJson<T>(text: string): T {
   try {
     return JSON.parse(text) as T;
@@ -254,21 +259,33 @@ async function groqChatText(args: {
 
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
+    error?: { message?: string };
   };
-  return data.choices?.[0]?.message?.content ?? "";
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content === "string" && content.trim()) {
+    return content;
+  }
+  const apiError = data.error?.message ? ` ${data.error.message}` : "";
+  throw new Error(`Groq API returned an empty completion.${apiError}`);
 }
 
 export async function evaluateCV(
   cvText: string,
   jdRequirements: JDRequirements
 ): Promise<EvaluationResult> {
-  const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+  const model = getClientEnv("VITE_GROQ_MODEL") || "openai/gpt-oss-20b";
   const normalizedCV = normalizeCV(cvText);
+  if (!normalizedCV) {
+    throw new Error("CV text is empty. Paste CV content before running screening.");
+  }
   const normalizedJD = canonicalizeJD(jdRequirements);
   const jdTitle = normalizedJD.title;
   const jdRawText = normalizedJD.raw_text;
   const mustHaves = normalizedJD.must_haves;
   const niceToHaves = normalizedJD.nice_to_haves;
+  if (!jdRawText || (mustHaves.length === 0 && niceToHaves.length === 0)) {
+    throw new Error("Active Job Description is invalid. Activate a valid JD and retry.");
+  }
   const requirements = [
     ...mustHaves.map((requirement) => ({ requirement, is_must_have: true })),
     ...niceToHaves.map((requirement) => ({ requirement, is_must_have: false })),
@@ -344,8 +361,8 @@ OUTPUT SCHEMA
 }
   `;
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("Missing GROQ_API_KEY environment variable.");
+  const apiKey = getClientEnv("VITE_GROQ_API_KEY");
+  if (!apiKey) throw new Error("Missing VITE_GROQ_API_KEY environment variable.");
 
   const jsonOnlyInstruction =
     "Return ONLY a valid JSON object that matches the requested schema. No markdown, no commentary, no code fences.";
@@ -365,7 +382,11 @@ OUTPUT SCHEMA
     const result = buildStableResult({ raw, requirements });
     setScreeningCache(cacheKey, result);
     return result;
-  } catch {
+  } catch (firstParseError) {
+    console.error("Primary AI response parse failed; attempting repair.", {
+      error: firstParseError,
+      outputText,
+    });
     const repaired = await groqChatText({
       apiKey,
       model,
@@ -382,9 +403,17 @@ OUTPUT SCHEMA
       ],
       response_format: { type: "json_object" },
     });
-    const raw = safeParseJson<ModelEvaluationOutput>(repaired);
-    const result = buildStableResult({ raw, requirements });
-    setScreeningCache(cacheKey, result);
-    return result;
+    try {
+      const raw = safeParseJson<ModelEvaluationOutput>(repaired);
+      const result = buildStableResult({ raw, requirements });
+      setScreeningCache(cacheKey, result);
+      return result;
+    } catch (repairParseError) {
+      console.error("AI response repair parse failed.", {
+        error: repairParseError,
+        repaired,
+      });
+      throw new Error("AI returned an invalid response format after retry.");
+    }
   }
 }

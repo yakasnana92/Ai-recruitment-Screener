@@ -10,6 +10,7 @@ interface Candidate {
   cvText: string;
   status: 'pending' | 'evaluating' | 'completed' | 'error';
   result?: EvaluationResult;
+  errorMessage?: string;
   timestamp: number;
 }
 
@@ -99,15 +100,21 @@ export default function App() {
 
   const handleEvaluate = async () => {
     const activeJDForEvaluation = activeJD;
-    if (!cvInput || !candidateNameInput || !activeJDForEvaluation) return;
+    const trimmedCV = cvInput.trim();
+    const trimmedCandidateName = candidateNameInput.trim();
+    const hasValidJD =
+      !!activeJDForEvaluation &&
+      ((activeJDForEvaluation.must_haves?.length ?? 0) > 0 ||
+        (activeJDForEvaluation.nice_to_haves?.length ?? 0) > 0);
+    if (!trimmedCV || !trimmedCandidateName || !hasValidJD || !activeJDForEvaluation) return;
 
     setIsEvaluating(true);
     const newId = Math.random().toString(36).substr(2, 9);
     
     const newCandidate: Candidate = {
       id: newId,
-      name: candidateNameInput,
-      cvText: cvInput,
+      name: trimmedCandidateName,
+      cvText: trimmedCV,
       status: 'evaluating',
       timestamp: Date.now()
     };
@@ -116,14 +123,23 @@ export default function App() {
     setSelectedCandidateId(newId);
 
     try {
-      const result = await evaluateCV(cvInput, activeJDForEvaluation);
+      const result = await evaluateCV(trimmedCV, activeJDForEvaluation);
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'completed', result } : c
       ));
     } catch (error) {
-      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown screening error.';
+      console.error('AI screening failed', {
+        error,
+        candidateId: newId,
+        candidateName: trimmedCandidateName,
+        cvLength: trimmedCV.length,
+        jdTitle: activeJDForEvaluation.title,
+        mustHaveCount: activeJDForEvaluation.must_haves.length,
+        niceToHaveCount: activeJDForEvaluation.nice_to_haves.length,
+      });
       setCandidates(prev => prev.map(c => 
-        c.id === newId ? { ...c, status: 'error' } : c
+        c.id === newId ? { ...c, status: 'error', errorMessage } : c
       ));
     } finally {
       setIsEvaluating(false);
@@ -189,7 +205,13 @@ export default function App() {
             </div>
             <button
               onClick={handleEvaluate}
-              disabled={isEvaluating || !cvInput || !candidateNameInput || !activeJD}
+              disabled={
+                isEvaluating ||
+                !cvInput.trim() ||
+                !candidateNameInput.trim() ||
+                !activeJD ||
+                (activeJD.must_haves.length === 0 && activeJD.nice_to_haves.length === 0)
+              }
               className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >
               {isEvaluating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
@@ -234,7 +256,9 @@ export default function App() {
                   <XCircle className="w-12 h-12 text-red-500" />
                   <div className="space-y-1">
                     <h3 className="text-lg font-bold">Evaluation Failed</h3>
-                    <p className="text-sm text-gray-500">There was an error processing this CV. Please try again.</p>
+                    <p className="text-sm text-gray-500">
+                      {selectedCandidate.errorMessage || 'There was an error processing this CV. Please try again.'}
+                    </p>
                   </div>
                 </div>
               )}
