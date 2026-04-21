@@ -33,12 +33,61 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
     }
   };
 
+  const splitLabelIntoTwoLines = (label: string, maxCharsPerLine: number = 30) => {
+    const normalized = label.trim().replace(/\s+/g, ' ');
+    if (normalized.length <= maxCharsPerLine) {
+      return [normalized];
+    }
+
+    const words = normalized.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const nextLine = currentLine ? `${currentLine} ${word}` : word;
+
+      if (nextLine.length <= maxCharsPerLine) {
+        currentLine = nextLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        currentLine = word;
+      }
+
+      if (lines.length === 2) {
+        break;
+      }
+    }
+
+    if (lines.length < 2 && currentLine) {
+      lines.push(currentLine);
+    }
+
+    if (lines.length > 2) {
+      return [lines[0], `${lines[1].slice(0, Math.max(maxCharsPerLine - 1, 1)).trimEnd()}…`];
+    }
+
+    const consumedLength = lines.join(' ').length;
+    if (normalized.length > consumedLength && lines[1]) {
+      const truncated = lines[1].slice(0, Math.max(maxCharsPerLine - 1, 1)).trimEnd();
+      lines[1] = `${truncated}…`;
+    }
+
+    return lines;
+  };
+
   const chartData = evidence.map(req => ({
-    name: req.requirement.substring(0, 30) + '...',
+    name: req.requirement,
     score: req.score,
     full_name: req.requirement,
     is_must_have: req.is_must_have
   }));
+
+  const chartRowHeight = 46;
+  const chartMinHeight = 320;
+  const chartTopBottomPadding = 44;
+  const chartHeight = Math.max(chartMinHeight, chartData.length * chartRowHeight + chartTopBottomPadding);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -129,14 +178,45 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
         </div>
 
         {/* Requirement Breakdown Chart */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 flex flex-col">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 flex flex-col min-w-0 h-full">
           <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-6">Requirement Evidence Score</h3>
-          <div className="flex-1 min-h-[300px]">
+          <div className="w-full min-w-0" style={{ height: chartHeight }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 30 }}>
+              <BarChart
+                data={chartData}
+                layout="vertical"
+                barCategoryGap="34%"
+                margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
                 <XAxis type="number" domain={[0, 3]} hide />
-                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10 }} />
+                <YAxis
+                  dataKey="name"
+                  type="category"
+                  width={220}
+                  interval={0}
+                  tick={(props: { x: number; y: number; payload: { value: string } }) => {
+                    const lines = splitLabelIntoTwoLines(props.payload.value, 30);
+                    return (
+                      <g transform={`translate(${props.x},${props.y})`}>
+                        <text
+                          x={0}
+                          y={0}
+                          dy={4}
+                          textAnchor="end"
+                          fill="#4b5563"
+                          fontSize={11}
+                        >
+                          {lines.map((line, index) => (
+                            <tspan key={`${line}-${index}`} x={0} dy={index === 0 ? 0 : 13}>
+                              {line}
+                            </tspan>
+                          ))}
+                        </text>
+                      </g>
+                    );
+                  }}
+                />
                 <Tooltip 
                   cursor={{ fill: '#f9fafb' }}
                   content={({ active, payload }) => {
@@ -155,7 +235,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
                     return null;
                   }}
                 />
-                <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={20}>
+                <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={18}>
                   {chartData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.is_must_have ? '#6366f1' : '#94a3b8'} />
                   ))}
@@ -163,7 +243,7 @@ export const EvaluationResultView: React.FC<Props> = ({ result }) => {
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-4 flex gap-4 text-[10px] uppercase font-bold tracking-wider">
+          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[10px] uppercase font-bold tracking-wider text-gray-500">
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 bg-indigo-500 rounded-sm" />
               <span>Must-Have</span>
