@@ -17,29 +17,29 @@ const ACTIVE_JD_STORAGE_KEY = 'active-jd-requirements';
 
 function parseJDText(rawText: string): JDRequirements {
   const normalizedText = rawText.trim();
-  const lines = normalizedText
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+  if (!normalizedText) {
+    throw new Error('Job description cannot be empty.');
+  }
 
-  const bulletLines = lines
-    .filter((line) => /^[-*•]\s+/.test(line))
-    .map((line) => line.replace(/^[-*•]\s+/, '').trim())
-    .filter(Boolean);
+  const sections = normalizedText.split(/\n\s*\n/);
+  const mustSection = sections[0] || '';
+  const niceSection = sections.slice(1).join('\n\n');
+  const normalizeRequirementLine = (line: string) => line.replace(/^[-*•]\s+/, '').trim();
+  const parseRequirements = (sectionText: string) =>
+    sectionText
+      .split('\n')
+      .map(normalizeRequirementLine)
+      .filter(Boolean);
 
-  const fallbackSentenceSplit = normalizedText
-    .split(/[;\n]/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 10);
+  const mustHaves = parseRequirements(mustSection);
+  const niceToHaves = parseRequirements(niceSection);
 
-  const requirements = bulletLines.length > 0 ? bulletLines : fallbackSentenceSplit;
-  if (requirements.length === 0) {
+  if (mustHaves.length === 0 && niceToHaves.length === 0) {
     throw new Error('Please provide a clearer job description with at least one requirement.');
   }
-  const midpoint = Math.max(1, Math.ceil(requirements.length * 0.6));
-  const mustHaves = requirements.slice(0, midpoint);
-  const niceToHaves = requirements.slice(midpoint);
-  const title = lines[0]?.slice(0, 80) || 'Untitled Role';
+
+  const titleSeed = mustHaves[0] || niceToHaves[0] || 'Job Description';
+  const title = `${titleSeed.slice(0, 60)} (${mustHaves.length} must-have${mustHaves.length === 1 ? '' : 's'}${niceToHaves.length > 0 ? `, ${niceToHaves.length} nice-to-have${niceToHaves.length === 1 ? '' : 's'}` : ''})`;
 
   return {
     title,
@@ -60,35 +60,11 @@ export default function App() {
   const [jdActivationError, setJdActivationError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const saved = localStorage.getItem(ACTIVE_JD_STORAGE_KEY);
-    if (!saved) return;
-
-    try {
-      const parsed = JSON.parse(saved) as JDRequirements;
-      if (
-        parsed &&
-        typeof parsed.raw_text === 'string' &&
-        Array.isArray(parsed.must_haves) &&
-        Array.isArray(parsed.nice_to_haves) &&
-        (parsed.must_haves.length > 0 || parsed.nice_to_haves.length > 0)
-      ) {
-        setActiveJD(parsed);
-        setJdInput(parsed.raw_text);
-      } else {
-        localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
-      }
-    } catch {
-      localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
-    }
+    setJdInput('');
+    setActiveJD(null);
+    setJdActivationError(null);
+    localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
   }, []);
-
-  const saveActiveJD = (jd: JDRequirements | null) => {
-    if (!jd) {
-      localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
-      return;
-    }
-    localStorage.setItem(ACTIVE_JD_STORAGE_KEY, JSON.stringify(jd));
-  };
 
   const handleUseThisJD = (currentInput: string) => {
     const latestInput = currentInput.trim();
@@ -101,9 +77,11 @@ export default function App() {
       const parsed = parseJDText(latestInput);
       setJdInput(latestInput);
       setActiveJD(parsed);
-      saveActiveJD(parsed);
+      localStorage.setItem(ACTIVE_JD_STORAGE_KEY, JSON.stringify(parsed));
       setJdActivationError(null);
     } catch (error) {
+      setActiveJD(null);
+      localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
       setJdActivationError(error instanceof Error ? error.message : 'Unable to activate this job description.');
     }
   };
@@ -116,11 +94,12 @@ export default function App() {
   const handleClearJD = () => {
     setJdActivationError(null);
     setActiveJD(null);
-    saveActiveJD(null);
+    localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
   };
 
   const handleEvaluate = async () => {
-    if (!cvInput || !candidateNameInput || !activeJD) return;
+    const activeJDForEvaluation = activeJD;
+    if (!cvInput || !candidateNameInput || !activeJDForEvaluation) return;
 
     setIsEvaluating(true);
     const newId = Math.random().toString(36).substr(2, 9);
@@ -137,7 +116,7 @@ export default function App() {
     setSelectedCandidateId(newId);
 
     try {
-      const result = await evaluateCV(cvInput, activeJD);
+      const result = await evaluateCV(cvInput, activeJDForEvaluation);
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'completed', result } : c
       ));
