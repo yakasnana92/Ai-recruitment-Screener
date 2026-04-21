@@ -5,8 +5,9 @@ import { JDRequirements } from '../services/aiService';
 interface Props {
   jdInput: string;
   activeJD: JDRequirements | null;
+  activationError: string | null;
   onJdInputChange: (value: string) => void;
-  onUseThisJD: () => void;
+  onUseThisJD: (currentInput: string) => void;
   onReplaceJD: () => void;
   onClearJD: () => void;
 }
@@ -14,11 +15,14 @@ interface Props {
 export const JobDescriptionView: React.FC<Props> = ({
   jdInput,
   activeJD,
+  activationError,
   onJdInputChange,
   onUseThisJD,
   onReplaceJD,
   onClearJD,
 }) => {
+  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+
   return (
     <div className="space-y-6">
       <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">
@@ -33,6 +37,7 @@ export const JobDescriptionView: React.FC<Props> = ({
         </div>
 
         <textarea
+          ref={inputRef}
           value={jdInput}
           onChange={(e) => onJdInputChange(e.target.value)}
           placeholder="Paste job description text here..."
@@ -40,12 +45,13 @@ export const JobDescriptionView: React.FC<Props> = ({
         />
 
         <button
-          onClick={onUseThisJD}
+          onClick={() => onUseThisJD(inputRef.current?.value ?? jdInput)}
           disabled={!jdInput.trim()}
           className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           Use This JD
         </button>
+        {activationError && <p className="text-sm text-red-600">{activationError}</p>}
       </section>
 
       <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">

@@ -16,7 +16,8 @@ interface Candidate {
 const ACTIVE_JD_STORAGE_KEY = 'active-jd-requirements';
 
 function parseJDText(rawText: string): JDRequirements {
-  const lines = rawText
+  const normalizedText = rawText.trim();
+  const lines = normalizedText
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
@@ -26,12 +27,15 @@ function parseJDText(rawText: string): JDRequirements {
     .map((line) => line.replace(/^[-*•]\s+/, '').trim())
     .filter(Boolean);
 
-  const fallbackSentenceSplit = rawText
+  const fallbackSentenceSplit = normalizedText
     .split(/[;\n]/)
     .map((line) => line.trim())
     .filter((line) => line.length > 10);
 
   const requirements = bulletLines.length > 0 ? bulletLines : fallbackSentenceSplit;
+  if (requirements.length === 0) {
+    throw new Error('Please provide a clearer job description with at least one requirement.');
+  }
   const midpoint = Math.max(1, Math.ceil(requirements.length * 0.6));
   const mustHaves = requirements.slice(0, midpoint);
   const niceToHaves = requirements.slice(midpoint);
@@ -41,7 +45,7 @@ function parseJDText(rawText: string): JDRequirements {
     title,
     must_haves: mustHaves,
     nice_to_haves: niceToHaves,
-    raw_text: rawText,
+    raw_text: normalizedText,
   };
 }
 
@@ -53,6 +57,7 @@ export default function App() {
   const [candidateNameInput, setCandidateNameInput] = React.useState('');
   const [jdInput, setJdInput] = React.useState('');
   const [activeJD, setActiveJD] = React.useState<JDRequirements | null>(null);
+  const [jdActivationError, setJdActivationError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const saved = localStorage.getItem(ACTIVE_JD_STORAGE_KEY);
@@ -60,8 +65,17 @@ export default function App() {
 
     try {
       const parsed = JSON.parse(saved) as JDRequirements;
-      if (parsed?.must_haves && parsed?.nice_to_haves) {
+      if (
+        parsed &&
+        typeof parsed.raw_text === 'string' &&
+        Array.isArray(parsed.must_haves) &&
+        Array.isArray(parsed.nice_to_haves) &&
+        (parsed.must_haves.length > 0 || parsed.nice_to_haves.length > 0)
+      ) {
         setActiveJD(parsed);
+        setJdInput(parsed.raw_text);
+      } else {
+        localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
       }
     } catch {
       localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
@@ -76,17 +90,31 @@ export default function App() {
     localStorage.setItem(ACTIVE_JD_STORAGE_KEY, JSON.stringify(jd));
   };
 
-  const handleUseThisJD = () => {
-    const parsed = parseJDText(jdInput.trim());
-    setActiveJD(parsed);
-    saveActiveJD(parsed);
+  const handleUseThisJD = (currentInput: string) => {
+    const latestInput = currentInput.trim();
+    if (!latestInput) {
+      setJdActivationError('Job description cannot be empty.');
+      return;
+    }
+
+    try {
+      const parsed = parseJDText(latestInput);
+      setJdInput(latestInput);
+      setActiveJD(parsed);
+      saveActiveJD(parsed);
+      setJdActivationError(null);
+    } catch (error) {
+      setJdActivationError(error instanceof Error ? error.message : 'Unable to activate this job description.');
+    }
   };
 
   const handleReplaceJD = () => {
+    setJdActivationError(null);
     setJdInput(activeJD?.raw_text || '');
   };
 
   const handleClearJD = () => {
+    setJdActivationError(null);
     setActiveJD(null);
     saveActiveJD(null);
   };
@@ -139,7 +167,11 @@ export default function App() {
           <JobDescriptionView
             jdInput={jdInput}
             activeJD={activeJD}
-            onJdInputChange={setJdInput}
+            activationError={jdActivationError}
+            onJdInputChange={(value) => {
+              setJdActivationError(null);
+              setJdInput(value);
+            }}
             onUseThisJD={handleUseThisJD}
             onReplaceJD={handleReplaceJD}
             onClearJD={handleClearJD}
