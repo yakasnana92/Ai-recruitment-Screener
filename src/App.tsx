@@ -1,24 +1,8 @@
 import React from 'react';
-import { 
-  Users, 
-  FileText, 
-  Settings, 
-  Code, 
-  Upload, 
-  Search, 
-  Loader2, 
-  Plus,
-  Trash2,
-  ChevronRight,
-  LayoutDashboard,
-  XCircle
-} from 'lucide-react';
-import { evaluateCV, EvaluationResult } from './services/aiService';
+import { Loader2, Upload, XCircle } from 'lucide-react';
+import { evaluateCV, EvaluationResult, JDRequirements } from './services/aiService';
 import { EvaluationResultView } from './components/EvaluationResultView';
 import { JobDescriptionView } from './components/JobDescriptionView';
-import { AppsScriptExport } from './components/AppsScriptExport';
-
-type View = 'dashboard' | 'jd' | 'script' | 'evaluation';
 
 interface Candidate {
   id: string;
@@ -26,44 +10,136 @@ interface Candidate {
   cvText: string;
   status: 'pending' | 'evaluating' | 'completed' | 'error';
   result?: EvaluationResult;
+  errorMessage?: string;
   timestamp: number;
 }
 
+const ACTIVE_JD_STORAGE_KEY = 'active-jd-requirements';
+
+function parseJDText(rawText: string): JDRequirements {
+  const normalizedText = rawText.trim();
+  if (!normalizedText) {
+    throw new Error('Job description cannot be empty.');
+  }
+
+  const sections = normalizedText.split(/\n\s*\n/);
+  const mustSection = sections[0] || '';
+  const niceSection = sections.slice(1).join('\n\n');
+  const normalizeRequirementLine = (line: string) => line.replace(/^[-*•]\s+/, '').trim();
+  const parseRequirements = (sectionText: string) =>
+    sectionText
+      .split('\n')
+      .map(normalizeRequirementLine)
+      .filter(Boolean);
+
+  const mustHaves = parseRequirements(mustSection);
+  const niceToHaves = parseRequirements(niceSection);
+
+  if (mustHaves.length === 0 && niceToHaves.length === 0) {
+    throw new Error('Please provide a clearer job description with at least one requirement.');
+  }
+
+  const titleSeed = mustHaves[0] || niceToHaves[0] || 'Job Description';
+  const title = `${titleSeed.slice(0, 60)} (${mustHaves.length} must-have${mustHaves.length === 1 ? '' : 's'}${niceToHaves.length > 0 ? `, ${niceToHaves.length} nice-to-have${niceToHaves.length === 1 ? '' : 's'}` : ''})`;
+
+  return {
+    title,
+    mustHaves,
+    niceToHaves,
+    rawText: normalizedText,
+  };
+}
+
 export default function App() {
-  const [activeView, setActiveView] = React.useState<View>('dashboard');
   const [candidates, setCandidates] = React.useState<Candidate[]>([]);
   const [selectedCandidateId, setSelectedCandidateId] = React.useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = React.useState(false);
   const [cvInput, setCvInput] = React.useState('');
   const [candidateNameInput, setCandidateNameInput] = React.useState('');
+  const [jdInput, setJdInput] = React.useState('');
+  const [activeJD, setActiveJD] = React.useState<JDRequirements | null>(null);
+  const [jdActivationError, setJdActivationError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setJdInput('');
+    setActiveJD(null);
+    setJdActivationError(null);
+    localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
+  }, []);
+
+  const handleUseThisJD = (currentInput: string) => {
+    const latestInput = currentInput.trim();
+    if (!latestInput) {
+      setJdActivationError('Job description cannot be empty.');
+      return;
+    }
+
+    try {
+      const parsed = parseJDText(latestInput);
+      setJdInput(latestInput);
+      setActiveJD(parsed);
+      localStorage.setItem(ACTIVE_JD_STORAGE_KEY, JSON.stringify(parsed));
+      setJdActivationError(null);
+    } catch (error) {
+      setActiveJD(null);
+      localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
+      setJdActivationError(error instanceof Error ? error.message : 'Unable to activate this job description.');
+    }
+  };
+
+  const handleReplaceJD = () => {
+    setJdActivationError(null);
+    setJdInput(activeJD?.rawText || '');
+  };
+
+  const handleClearJD = () => {
+    setJdActivationError(null);
+    setActiveJD(null);
+    localStorage.removeItem(ACTIVE_JD_STORAGE_KEY);
+  };
 
   const handleEvaluate = async () => {
-    if (!cvInput || !candidateNameInput) return;
+    const activeJDForEvaluation = activeJD;
+    const trimmedCV = cvInput.trim();
+    const trimmedCandidateName = candidateNameInput.trim();
+    const hasValidJD =
+      !!activeJDForEvaluation &&
+      ((activeJDForEvaluation.mustHaves?.length ?? 0) > 0 ||
+        (activeJDForEvaluation.niceToHaves?.length ?? 0) > 0);
+    if (!trimmedCV || !trimmedCandidateName || !hasValidJD || !activeJDForEvaluation) return;
 
     setIsEvaluating(true);
     const newId = Math.random().toString(36).substr(2, 9);
     
     const newCandidate: Candidate = {
       id: newId,
-      name: candidateNameInput,
-      cvText: cvInput,
+      name: trimmedCandidateName,
+      cvText: trimmedCV,
       status: 'evaluating',
       timestamp: Date.now()
     };
 
     setCandidates(prev => [newCandidate, ...prev]);
     setSelectedCandidateId(newId);
-    setActiveView('evaluation');
 
     try {
-      const result = await evaluateCV(cvInput);
+      const result = await evaluateCV(trimmedCandidateName, trimmedCV, activeJDForEvaluation);
       setCandidates(prev => prev.map(c => 
         c.id === newId ? { ...c, status: 'completed', result } : c
       ));
     } catch (error) {
-      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown screening error.';
+      console.error('AI screening failed', {
+        error,
+        candidateId: newId,
+        candidateName: trimmedCandidateName,
+        cvLength: trimmedCV.length,
+        jdTitle: activeJDForEvaluation.title,
+        mustHaveCount: activeJDForEvaluation.mustHaves.length,
+        niceToHaveCount: activeJDForEvaluation.niceToHaves.length,
+      });
       setCandidates(prev => prev.map(c => 
-        c.id === newId ? { ...c, status: 'error' } : c
+        c.id === newId ? { ...c, status: 'error', errorMessage } : c
       ));
     } finally {
       setIsEvaluating(false);
@@ -72,197 +148,99 @@ export default function App() {
     }
   };
 
-  const deleteCandidate = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCandidates(prev => prev.filter(c => c.id !== id));
-    if (selectedCandidateId === id) {
-      setSelectedCandidateId(null);
-      setActiveView('dashboard');
-    }
-  };
-
   const selectedCandidate = candidates.find(c => c.id === selectedCandidateId);
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] flex text-gray-900 font-sans">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col sticky top-0 h-screen">
-        <div className="p-6 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-              <Users className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="font-bold text-lg tracking-tight">RecruitAI</h1>
-          </div>
-        </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          <button 
-            onClick={() => setActiveView('dashboard')}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeView === 'dashboard' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'
-            }`}
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            Dashboard
-          </button>
-          <button 
-            onClick={() => setActiveView('jd')}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeView === 'jd' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Job Description
-          </button>
-          <button 
-            onClick={() => setActiveView('script')}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeView === 'script' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'
-            }`}
-          >
-            <Code className="w-4 h-4" />
-            Apps Script
-          </button>
-        </nav>
-
-        <div className="p-4 border-t border-gray-100">
-          <div className="bg-gray-50 rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Active JD</p>
-            <p className="text-xs font-bold text-gray-700 truncate">React Native Engineer</p>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10 px-8 py-4 flex items-center justify-between">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-gray-500">
-            {activeView === 'dashboard' && 'Candidate Pipeline'}
-            {activeView === 'jd' && 'JD Configuration'}
-            {activeView === 'script' && 'Automation Export'}
-            {activeView === 'evaluation' && 'Evaluation Result'}
-          </h2>
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search candidates..." 
-                className="pl-10 pr-4 py-2 bg-gray-100 border-none rounded-full text-xs focus:ring-2 focus:ring-indigo-500 transition-all w-64"
-              />
-            </div>
-          </div>
+    <div className="min-h-screen bg-[#f8f9fa] text-gray-900 font-sans">
+      <main className="max-w-6xl mx-auto p-6 md:p-8 space-y-8">
+        <header className="bg-white rounded-2xl p-6 shadow-sm border border-black/5">
+          <h1 className="text-2xl font-bold">RecruitAI Screener</h1>
+          <p className="text-sm text-gray-500 mt-1">Use your own Job Description to evaluate candidate CVs.</p>
         </header>
 
-        <div className="p-8 max-w-6xl mx-auto">
-          {activeView === 'dashboard' && (
-            <div className="space-y-8">
-              {/* New Evaluation Form */}
-              <div className="bg-white rounded-2xl p-8 shadow-sm border border-black/5 space-y-6">
-                <div className="flex items-center gap-3 mb-2">
-                  <Plus className="w-5 h-5 text-indigo-600" />
-                  <h3 className="text-lg font-bold">New Candidate Evaluation</h3>
-                </div>
-                <div className="grid grid-cols-1 gap-6">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Candidate Name</label>
-                    <input 
-                      type="text" 
-                      value={candidateNameInput}
-                      onChange={(e) => setCandidateNameInput(e.target.value)}
-                      placeholder="e.g. John Doe"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Paste CV Text</label>
-                    <textarea 
-                      value={cvInput}
-                      onChange={(e) => setCvInput(e.target.value)}
-                      placeholder="Paste the full text from the candidate's CV here..."
-                      className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none resize-none font-mono text-xs"
-                    />
-                  </div>
-                  <button 
-                    onClick={handleEvaluate}
-                    disabled={isEvaluating || !cvInput || !candidateNameInput}
-                    className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200"
-                  >
-                    {isEvaluating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
-                    {isEvaluating ? 'Evaluating with AI...' : 'Run AI Screening'}
-                  </button>
-                </div>
-              </div>
+        <section>
+          <JobDescriptionView
+            jdInput={jdInput}
+            activeJD={activeJD}
+            activationError={jdActivationError}
+            onJdInputChange={(value) => {
+              setJdActivationError(null);
+              setJdInput(value);
+            }}
+            onUseThisJD={handleUseThisJD}
+            onReplaceJD={handleReplaceJD}
+            onClearJD={handleClearJD}
+          />
+        </section>
 
-              {/* Candidate List */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Recent Evaluations</h3>
-                {candidates.length === 0 ? (
-                  <div className="bg-white rounded-2xl p-12 text-center border border-dashed border-gray-200">
-                    <Users className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                    <p className="text-gray-400 text-sm">No candidates evaluated yet. Start by adding one above.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-3">
-                    {candidates.map((candidate) => (
-                      <div 
-                        key={candidate.id}
-                        onClick={() => {
-                          setSelectedCandidateId(candidate.id);
-                          setActiveView('evaluation');
-                        }}
-                        className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-pointer flex items-center justify-between group"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                            candidate.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 
-                            candidate.status === 'evaluating' ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-50 text-gray-400'
-                          }`}>
-                            {candidate.status === 'evaluating' ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-sm text-gray-900">{candidate.name}</h4>
-                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">
-                              {new Date(candidate.timestamp).toLocaleDateString()} • {candidate.status}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          {candidate.result && (
-                            <div className="text-right">
-                              <div className="text-lg font-bold text-gray-900">{candidate.result.overall_score}</div>
-                              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Score</div>
-                            </div>
-                          )}
-                          <div className="flex items-center gap-2">
-                            <button 
-                              onClick={(e) => deleteCandidate(candidate.id, e)}
-                              className="p-2 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                            <ChevronRight className="w-5 h-5 text-gray-300" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+        <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-bold">CV Evaluation</h2>
+            {!activeJD && (
+              <span className="text-xs text-red-600 bg-red-50 px-3 py-1 rounded-full font-semibold">
+                Select a JD first
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-6">
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Candidate Name</label>
+              <input
+                type="text"
+                value={candidateNameInput}
+                onChange={(e) => setCandidateNameInput(e.target.value)}
+                placeholder="e.g. John Doe"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Paste CV Text</label>
+              <textarea
+                value={cvInput}
+                onChange={(e) => setCvInput(e.target.value)}
+                placeholder="Paste the full text from the candidate CV here..."
+                className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none resize-none font-mono text-xs"
+              />
+            </div>
+            <button
+              onClick={handleEvaluate}
+              disabled={
+                isEvaluating ||
+                !cvInput.trim() ||
+                !candidateNameInput.trim() ||
+                !activeJD ||
+                (activeJD.mustHaves.length === 0 && activeJD.niceToHaves.length === 0)
+              }
+              className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+            >
+              {isEvaluating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+              {isEvaluating ? 'Evaluating with AI...' : 'Run AI Screening'}
+            </button>
+          </div>
+        </section>
+
+        <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">
+          <h2 className="text-lg font-bold">Results</h2>
+          {candidates.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {candidates.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  onClick={() => setSelectedCandidateId(candidate.id)}
+                  className={`px-3 py-2 rounded-lg border text-sm ${
+                    candidate.id === selectedCandidateId
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {candidate.name} ({candidate.status})
+                </button>
+              ))}
             </div>
           )}
-
-          {activeView === 'jd' && <JobDescriptionView />}
-          {activeView === 'script' && <AppsScriptExport />}
-          {activeView === 'evaluation' && selectedCandidate && (
+          {selectedCandidate ? (
             <div className="space-y-6">
-              <button 
-                onClick={() => setActiveView('dashboard')}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition-colors"
-              >
-                ← Back to Dashboard
-              </button>
               {selectedCandidate.status === 'evaluating' ? (
                 <div className="bg-white rounded-2xl p-20 text-center border border-black/5 shadow-sm flex flex-col items-center justify-center gap-4">
                   <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
@@ -278,13 +256,17 @@ export default function App() {
                   <XCircle className="w-12 h-12 text-red-500" />
                   <div className="space-y-1">
                     <h3 className="text-lg font-bold">Evaluation Failed</h3>
-                    <p className="text-sm text-gray-500">There was an error processing this CV. Please try again.</p>
+                    <p className="text-sm text-gray-500">
+                      {selectedCandidate.errorMessage || 'There was an error processing this CV. Please try again.'}
+                    </p>
                   </div>
                 </div>
               )}
             </div>
+          ) : (
+            <p className="text-sm text-gray-500">No evaluation selected yet.</p>
           )}
-        </div>
+        </section>
       </main>
     </div>
   );

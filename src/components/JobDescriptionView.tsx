@@ -1,68 +1,103 @@
 import React from 'react';
-import { JD_REQUIREMENTS } from '../services/aiService';
-import { Briefcase, CheckCircle, Star } from 'lucide-react';
+import { Briefcase } from 'lucide-react';
+import { JDRequirements } from '../services/aiService';
 
-export const JobDescriptionView: React.FC = () => {
+interface Props {
+  jdInput: string;
+  activeJD: JDRequirements | null;
+  activationError: string | null;
+  onJdInputChange: (value: string) => void;
+  onUseThisJD: (currentInput: string) => void;
+  onReplaceJD: () => void;
+  onClearJD: () => void;
+}
+
+export const JobDescriptionView: React.FC<Props> = ({
+  jdInput,
+  activeJD,
+  activationError,
+  onJdInputChange,
+  onUseThisJD,
+  onReplaceJD,
+  onClearJD,
+}) => {
+  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+
   return (
-    <div className="bg-white rounded-2xl p-8 shadow-sm border border-black/5 space-y-8">
-      <div className="flex items-center gap-4 border-b border-gray-100 pb-6">
-        <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center">
-          <Briefcase className="w-6 h-6 text-indigo-600" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">React Native Engineer</h2>
-          <p className="text-sm text-gray-500">Recruitment Screening Configuration</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-        <section className="space-y-6">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-indigo-600" />
-            <h3 className="text-sm font-bold uppercase tracking-widest text-gray-900">Must-Have Requirements (80%)</h3>
+    <div className="space-y-6">
+      <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
+            <Briefcase className="w-5 h-5 text-indigo-600" />
           </div>
-          <ul className="space-y-4">
-            {JD_REQUIREMENTS.must_haves.map((req, i) => (
-              <li key={i} className="flex items-start gap-4 group">
-                <span className="text-xs font-mono text-indigo-300 mt-1 font-bold">0{i + 1}</span>
-                <p className="text-sm text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">{req}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="space-y-6">
-          <div className="flex items-center gap-2">
-            <Star className="w-5 h-5 text-slate-400" />
-            <h3 className="text-sm font-bold uppercase tracking-widest text-gray-900">Nice-to-Have Requirements (20%)</h3>
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Job Description Input</h3>
+            <p className="text-sm text-gray-500">Paste the full JD text and activate it for screening.</p>
           </div>
-          <ul className="space-y-4">
-            {JD_REQUIREMENTS.nice_to_haves.map((req, i) => (
-              <li key={i} className="flex items-start gap-4 group">
-                <span className="text-xs font-mono text-slate-300 mt-1 font-bold">0{i + 1}</span>
-                <p className="text-sm text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">{req}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
+        </div>
 
-      <div className="bg-gray-50 rounded-xl p-6 border border-gray-100">
-        <h4 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-4">Scoring Framework</h4>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { score: "0", label: "No Evidence", color: "bg-gray-200" },
-            { score: "1", label: "Weak Evidence", color: "bg-indigo-200" },
-            { score: "2", label: "Moderate Evidence", color: "bg-indigo-400" },
-            { score: "3", label: "Strong Evidence", color: "bg-indigo-600" },
-          ].map((item, i) => (
-            <div key={i} className="flex flex-col items-center gap-2">
-              <div className={`w-full h-1.5 rounded-full ${item.color}`} />
-              <span className="text-[10px] font-bold text-gray-900">{item.score} - {item.label}</span>
+        <textarea
+          ref={inputRef}
+          value={jdInput}
+          onChange={(e) => onJdInputChange(e.target.value)}
+          placeholder="Paste job description text here..."
+          className="w-full h-44 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all outline-none resize-none text-sm"
+        />
+
+        <button
+          onClick={() => onUseThisJD(inputRef.current?.value ?? jdInput)}
+          disabled={!jdInput.trim()}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+        >
+          Use This JD
+        </button>
+        {activationError && <p className="text-sm text-red-600">{activationError}</p>}
+      </section>
+
+      <section className="bg-white rounded-2xl p-6 shadow-sm border border-black/5 space-y-4">
+        <h3 className="text-lg font-bold text-gray-900">Active Job Description</h3>
+
+        {!activeJD ? (
+          <p className="text-sm text-gray-500">No active JD selected.</p>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Title</p>
+              <p className="text-sm text-gray-900">{activeJD.title || 'Untitled Role'}</p>
             </div>
-          ))}
-        </div>
-      </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Must-Haves</p>
+              <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                {activeJD.mustHaves.slice(0, 8).map((item, idx) => (
+                  <li key={`${item}-${idx}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Nice-to-Haves</p>
+              <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                {activeJD.niceToHaves.slice(0, 8).map((item, idx) => (
+                  <li key={`${item}-${idx}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onReplaceJD}
+                className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-sm font-medium hover:bg-gray-200 transition-all"
+              >
+                Replace JD
+              </button>
+              <button
+                onClick={onClearJD}
+                className="px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100 transition-all"
+              >
+                Clear JD
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 };

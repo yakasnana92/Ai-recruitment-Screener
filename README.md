@@ -15,6 +15,13 @@ View your app in AI Studio: https://ai.studio/apps/8e238da8-87ea-4443-bac5-1b7fa
 
 1. Install dependencies:
    `npm install`
-2. Set the `GROQ_API_KEY` in [.env.local](.env.local) to your Groq API key
+2. Create `.env.local` in the project root and add:
+   `GROQ_API_KEY="YOUR_GROQ_API_KEY"`
+   Optional: `GROQ_MODEL="openai/gpt-oss-20b"`
 3. Run the app:
    `npm run dev`
+
+## Architecture Note
+
+AI screening requests are sent from the frontend to `POST /api/screening`.
+The Express server in `server/index.ts` calls Groq using `GROQ_API_KEY` from server environment variables.
