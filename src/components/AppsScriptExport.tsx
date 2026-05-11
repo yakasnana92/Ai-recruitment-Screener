@@ -13,9 +13,9 @@ const CONFIG = {
   MENU_NAME: "AI Recruitment",
   CANDIDATES_SHEET: "Candidates",
   CONFIG_SHEET: "Config",
-  GEMINI_API_KEY_CELL: "B1", // Cell in Config sheet
+  GROQ_API_KEY_CELL: "B1", // Cell in Config sheet
   JD_TEXT_CELL: "B2",        // Cell in Config sheet
-  MODEL_NAME: "gemini-1.5-flash"
+  MODEL_NAME: "openai/gpt-oss-20b"
 };
 
 /**
@@ -68,7 +68,7 @@ function evaluateSelectedCandidate() {
     const cvText = extractTextFromDriveFile(fileId);
     
     sheet.getRange(rowIndex, COL_STATUS).setValue('AI Evaluating...');
-    const evaluation = callGeminiAI(cvText);
+    const evaluation = callGroqAI(cvText);
     
     // Write results back
     sheet.getRange(rowIndex, COL_SCORE).setValue(evaluation.overall_score);
@@ -121,14 +121,14 @@ function extractTextFromDriveFile(fileId) {
 }
 
 /**
- * Calls Gemini AI API with the CV text and JD prompt.
+ * Calls Groq (OpenAI-compatible) API with the CV text and JD prompt.
  */
-function callGeminiAI(cvText) {
+function callGroqAI(cvText) {
   const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.CONFIG_SHEET);
-  const apiKey = configSheet.getRange(CONFIG.GEMINI_API_KEY_CELL).getValue();
+  const apiKey = configSheet.getRange(CONFIG.GROQ_API_KEY_CELL).getValue();
   const jdText = configSheet.getRange(CONFIG.JD_TEXT_CELL).getValue();
   
-  if (!apiKey) throw new Error('Gemini API Key missing in Config sheet.');
+  if (!apiKey) throw new Error('Groq API Key missing in Config sheet.');
 
   const prompt = \`Evaluate this CV against the following Job Description. 
   Return ONLY a JSON object with: candidate_name, overall_score (0-100), recommendation, strengths (array), gaps (array), recruiter_summary.
@@ -137,26 +137,26 @@ function callGeminiAI(cvText) {
   
   CV: \${cvText}\`;
 
-  const url = \`https://generativelanguage.googleapis.com/v1beta/models/\${CONFIG.MODEL_NAME}:generateContent?key=\${apiKey}\`;
-  
   const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json" }
+    model: CONFIG.MODEL_NAME,
+    input: prompt
   };
 
   const options = {
     method: 'post',
     contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + apiKey },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
 
-  const response = UrlFetchApp.fetch(url, options);
+  const response = UrlFetchApp.fetch('https://api.groq.com/openai/v1/responses', options);
   const json = JSON.parse(response.getContentText());
-  
-  if (json.error) throw new Error(json.error.message);
-  
-  return JSON.parse(json.candidates[0].content.parts[0].text);
+
+  if (json.error) throw new Error(json.error.message || 'Groq API error');
+
+  // Groq Responses API returns the final text in output_text
+  return JSON.parse(json.output_text);
 }
 
 /**
@@ -174,7 +174,7 @@ function setupSheets() {
   // Setup Config Sheet
   let configSheet = ss.getSheetByName(CONFIG.CONFIG_SHEET);
   if (!configSheet) configSheet = ss.insertSheet(CONFIG.CONFIG_SHEET);
-  configSheet.getRange('A1').setValue('Gemini API Key:').setFontWeight('bold');
+  configSheet.getRange('A1').setValue('Groq API Key:').setFontWeight('bold');
   configSheet.getRange('A2').setValue('Job Description:').setFontWeight('bold');
   configSheet.setColumnWidth(2, 600);
 }
